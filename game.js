@@ -982,6 +982,41 @@
 
   /* ───────────────────────── Rendering ───────────────────────── */
   var ROAD_HALF = CFG.laneW * 1.5 + 0.31;
+
+  // Radial gradients are expensive to build every frame, so each colour's glow
+  // is rendered once into an offscreen canvas and then just blitted.
+  var glowCache = {};
+  function glowSprite(color) {
+    var sprite = glowCache[color];
+    if (sprite) return sprite;
+    var size = 128;
+    sprite = document.createElement('canvas');
+    sprite.width = sprite.height = size;
+    var g = sprite.getContext('2d');
+    var grd = g.createRadialGradient(size / 2, size / 2, 1, size / 2, size / 2, size / 2);
+    grd.addColorStop(0, rgba(color, 0.9));
+    grd.addColorStop(0.3, rgba(color, 0.42));
+    grd.addColorStop(1, rgba(color, 0));
+    g.fillStyle = grd;
+    g.fillRect(0, 0, size, size);
+    glowCache[color] = sprite;
+    return sprite;
+  }
+
+  function drawGlow(x, y, radius, color, alpha) {
+    if (radius <= 0.5) return;
+    var prev = ctx.globalAlpha;
+    ctx.globalAlpha = prev * clamp(alpha, 0, 1);
+    ctx.drawImage(glowSprite(color), x - radius, y - radius, radius * 2, radius * 2);
+    ctx.globalAlpha = prev;
+  }
+
+  // One colour per required move, used on the road glow, the rim light and the
+  // glyph, so an obstacle can be read long before its shape is legible.
+  var ACTION_COLOR = { jump: '#ffcf5c', roll: '#ff6b8b', lane: '#7eb8ff' };
+
+  // Readability layers, individually switchable for profiling.
+  var FX = { glow: true, rim: true, glyph: true, beacon: true };
   var pal = {};
 
   function updatePalette() {
@@ -1095,7 +1130,7 @@
       // Dashed lane dividers
       var dash = Math.floor((G.worldZ + (z1 + z2) / 2) / 2.1) % 2 === 0;
       if (dash) {
-        ctx.fillStyle = rgba('#ffffff', 0.13);
+        ctx.fillStyle = rgba('#ffffff', 0.18);
         for (var d = -1; d <= 1; d += 2) {
           var dx1 = (d * CFG.laneW / 2) * s1, dx2 = (d * CFG.laneW / 2) * s2;
           var wgt1 = 0.05 * s1, wgt2 = 0.05 * s2;
@@ -1126,11 +1161,11 @@
     ctx.shadowBlur = 0;
 
     // Distance fog so pop-in stays invisible
-    var fg = ctx.createLinearGradient(0, hz - 6, 0, hz + view.h * 0.26);
-    fg.addColorStop(0, rgba(pal.fogHex, 0.95));
+    var fg = ctx.createLinearGradient(0, hz - 6, 0, hz + view.h * 0.2);
+    fg.addColorStop(0, rgba(pal.fogHex, 0.7));
     fg.addColorStop(1, rgba(pal.fogHex, 0));
     ctx.fillStyle = fg;
-    ctx.fillRect(0, hz - 6, view.w, view.h * 0.3);
+    ctx.fillRect(0, hz - 6, view.w, view.h * 0.24);
   }
 
   /* Draw an axis-aligned world box in perspective (front, top and one side). */
@@ -1162,70 +1197,151 @@
     return { nl: nl, nr: nr, nt: nt, nb: nb, sN: sN };
   }
 
+  /* A glow painted on the road in front of an obstacle. It stays wide and
+     bright at any distance, so the lane and the hazard read from far away. */
+  function groundGlow(x, halfW, zNear, zFar, color, alpha) {
+    if (zFar < 1.4) return;
+    var zn = Math.max(zNear, 1.4);
+    if (zFar - zn < 0.05) return;
+    var bands = 3;
+    for (var i = 0; i < bands; i++) {
+      var z0 = zn + (zFar - zn) * (i / bands);
+      var z1 = zn + (zFar - zn) * ((i + 1) / bands);
+      var s0 = scaleAt(z0), s1 = scaleAt(z1);
+      var y0 = projY(0.015, s0), y1 = projY(0.015, s1);
+      if (y0 - y1 < 0.4) continue;
+      ctx.fillStyle = rgba(color, alpha * (0.3 + 0.7 * ((i + 1) / bands)));
+      ctx.beginPath();
+      ctx.moveTo(projX(x - halfW, z0, s0), y0);
+      ctx.lineTo(projX(x + halfW, z0, s0), y0);
+      ctx.lineTo(projX(x + halfW, z1, s1), y1);
+      ctx.lineTo(projX(x - halfW, z1, s1), y1);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  /* The move itself, drawn on the face you are running at. */
+  function actionGlyph(cx, cy, size, action, color) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.strokeStyle = 'rgba(12,7,22,0.55)';
+    ctx.lineWidth = Math.max(3, size * 0.4);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    var path = function () {
+      ctx.beginPath();
+      if (action === 'jump') {
+        ctx.moveTo(-size, size * 0.45); ctx.lineTo(0, -size * 0.5); ctx.lineTo(size, size * 0.45);
+        ctx.moveTo(-size, size * 1.05); ctx.lineTo(0, size * 0.1); ctx.lineTo(size, size * 1.05);
+      } else if (action === 'roll') {
+        ctx.moveTo(-size, -size * 0.45); ctx.lineTo(0, size * 0.5); ctx.lineTo(size, -size * 0.45);
+        ctx.moveTo(-size, -size * 1.05); ctx.lineTo(0, -size * 0.1); ctx.lineTo(size, -size * 1.05);
+      } else {
+        ctx.moveTo(-size * 0.35, -size * 0.6); ctx.lineTo(-size * 1.1, 0); ctx.lineTo(-size * 0.35, size * 0.6);
+        ctx.moveTo(size * 0.35, -size * 0.6); ctx.lineTo(size * 1.1, 0); ctx.lineTo(size * 0.35, size * 0.6);
+      }
+    };
+    path();
+    ctx.stroke();                       // dark backing so it reads on any face
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1.6, size * 0.22);
+    path();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /* A bright lip along the top and near edges of a box. */
+  function rimLight(b, color, strength) {
+    var w = Math.max(1.2, 0.05 * b.sN);
+    ctx.save();
+    ctx.strokeStyle = rgba(color, 0.55 * (strength || 1));
+    ctx.lineWidth = w;
+    ctx.strokeRect(b.nl, b.nt, b.nr - b.nl, b.nb - b.nt);
+    ctx.strokeStyle = rgba(color, 0.95 * (strength || 1));
+    ctx.lineWidth = w * 1.7;
+    ctx.beginPath();
+    ctx.moveTo(b.nl, b.nt);
+    ctx.lineTo(b.nr, b.nt);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawObstacle(e) {
     var zN = e.z - e.len / 2, zF = e.z + e.len / 2;
     if (zF < 1.2 || zN > CFG.drawDist + 12) return;
     var alpha = e.broken ? clamp(e.broken / 0.4, 0, 1) : 1;
+    var col = ACTION_COLOR[e.clear] || '#ffffff';
     ctx.save();
     ctx.globalAlpha = alpha;
     var s = scaleAt(Math.max(zN, 0.7));
 
+    // Road glow leading into the obstacle, and a brighter patch under it.
+    if (FX.glow) {
+      groundGlow(e.x, e.w * 0.52, zN - 3.4, zN, col, 0.6);
+      groundGlow(e.x, e.w * 0.52, zN, zF, col, 0.4);
+    }
+
+
     // Contact shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.32)';
+    ctx.fillStyle = 'rgba(0,0,0,0.38)';
     ctx.beginPath();
     ctx.ellipse(projX(e.x, e.z, s), projY(0, s), e.w * 0.62 * s, 0.18 * s, 0, 0, 6.2832);
     ctx.fill();
 
+    var b, faceW, faceH, glyph;
+
     if (e.type === 'crate') {
-      var b = box3d(e.x, 0, e.h, e.w / 2, zN, zF, '#5a3f2a', '#7d5a3c', '#442f1f');
+      b = box3d(e.x, 0, e.h, e.w / 2, zN, zF, '#8a5f37', '#b8834e', '#5c3d21');
       // Rope bindings
-      ctx.strokeStyle = 'rgba(255,207,92,0.75)';
+      ctx.strokeStyle = 'rgba(255,224,138,0.8)';
       ctx.lineWidth = Math.max(1, 0.05 * b.sN);
       ctx.beginPath();
-      ctx.moveTo(b.nl + (b.nr - b.nl) * 0.3, b.nt); ctx.lineTo(b.nl + (b.nr - b.nl) * 0.3, b.nb);
-      ctx.moveTo(b.nl + (b.nr - b.nl) * 0.7, b.nt); ctx.lineTo(b.nl + (b.nr - b.nl) * 0.7, b.nb);
       ctx.moveTo(b.nl, b.nt + (b.nb - b.nt) * 0.5); ctx.lineTo(b.nr, b.nt + (b.nb - b.nt) * 0.5);
       ctx.stroke();
+      if (FX.rim) rimLight(b, col, 1);
+      faceW = b.nr - b.nl; faceH = b.nb - b.nt;
+      glyph = Math.min(faceW, faceH) * 0.26;
+      if (FX.glyph && glyph > 2.2) actionGlyph((b.nl + b.nr) / 2, b.nt + faceH * 0.52, glyph, 'jump', col);
 
     } else if (e.type === 'gate') {
       // Two posts plus a low crossbar you have to roll under.
       var postW = 0.16;
-      box3d(e.x - e.w / 2 + postW, 0, e.h, postW, zN, zF, '#8a2f43', '#a5455a', '#68202f');
-      box3d(e.x + e.w / 2 - postW, 0, e.h, postW, zN, zF, '#8a2f43', '#a5455a', '#68202f');
-      box3d(e.x, e.low, e.h - 0.15, e.w / 2, zN, zF, '#c2543f', '#e07a52', '#8f3a2c');
-      // Paper lantern glow on the bar
-      var sm = scaleAt(zN);
+      box3d(e.x - e.w / 2 + postW, 0, e.h, postW, zN, zF, '#a3384f', '#c34c66', '#75253a');
+      box3d(e.x + e.w / 2 - postW, 0, e.h, postW, zN, zF, '#a3384f', '#c34c66', '#75253a');
+      b = box3d(e.x, e.low, e.h - 0.15, e.w / 2, zN, zF, '#d9573f', '#ff8a63', '#a03b2b');
+      if (FX.rim) rimLight(b, col, 1);
+      // Glow under the bar so the gap you roll through reads at distance.
+      var sm = scaleAt(Math.max(zN, 0.7));
       var gx = projX(e.x, zN, sm), gy = projY((e.low + e.h) / 2, sm);
-      var lg = ctx.createRadialGradient(gx, gy, 1, gx, gy, 1.2 * sm);
-      lg.addColorStop(0, 'rgba(255,207,92,0.45)');
-      lg.addColorStop(1, 'rgba(255,207,92,0)');
-      ctx.fillStyle = lg;
-      ctx.beginPath(); ctx.arc(gx, gy, 1.2 * sm, 0, 6.2832); ctx.fill();
+      drawGlow(gx, gy, 1.4 * sm, '#ff6b8b', 0.5);
+      faceW = b.nr - b.nl; faceH = b.nb - b.nt;
+      glyph = Math.min(faceW * 0.5, faceH) * 0.42;
+      if (FX.glyph && glyph > 2.2) actionGlyph((b.nl + b.nr) / 2, b.nt + faceH * 0.5, glyph, 'roll', col);
 
     } else if (e.type === 'wall') {
-      var wb = box3d(e.x, 0, e.h, e.w / 2, zN, zF, '#2f4a33', '#3d6142', '#233827');
+      b = box3d(e.x, 0, e.h, e.w / 2, zN, zF, '#356a4d', '#4a9670', '#244a36');
       // Bamboo slats
-      ctx.strokeStyle = 'rgba(160,220,150,0.35)';
-      ctx.lineWidth = Math.max(1, 0.04 * wb.sN);
+      ctx.strokeStyle = 'rgba(180,240,190,0.4)';
+      ctx.lineWidth = Math.max(1, 0.04 * b.sN);
       var slats = 5;
       for (var i = 1; i < slats; i++) {
-        var xx = wb.nl + (wb.nr - wb.nl) * (i / slats);
-        ctx.beginPath(); ctx.moveTo(xx, wb.nt); ctx.lineTo(xx, wb.nb); ctx.stroke();
+        var xx = b.nl + (b.nr - b.nl) * (i / slats);
+        ctx.beginPath(); ctx.moveTo(xx, b.nt); ctx.lineTo(xx, b.nb); ctx.stroke();
       }
-      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-      ctx.beginPath();
-      ctx.moveTo(wb.nl, wb.nt + (wb.nb - wb.nt) * 0.28); ctx.lineTo(wb.nr, wb.nt + (wb.nb - wb.nt) * 0.28);
-      ctx.moveTo(wb.nl, wb.nt + (wb.nb - wb.nt) * 0.72); ctx.lineTo(wb.nr, wb.nt + (wb.nb - wb.nt) * 0.72);
-      ctx.stroke();
+      if (FX.rim) rimLight(b, col, 1);
+      faceW = b.nr - b.nl; faceH = b.nb - b.nt;
+      glyph = Math.min(faceW, faceH) * 0.22;
+      if (FX.glyph && glyph > 2.2) actionGlyph((b.nl + b.nr) / 2, b.nt + faceH * 0.42, glyph, 'lane', col);
 
     } else if (e.type === 'cart') {
-      var cb = box3d(e.x, 0.34, e.top, e.w / 2, zN, zF, '#3a2b58', '#57407f', '#281d3e');
+      b = box3d(e.x, 0.34, e.top, e.w / 2, zN, zF, '#4b3878', '#6b53a6', '#332652');
       // Roof trim and side banner
       box3d(e.x, e.top, e.top + 0.12, e.w / 2 + 0.06, zN, zF, '#ffcf5c', '#ffe08a', '#c79a34');
-      ctx.fillStyle = 'rgba(255,107,139,0.65)';
-      ctx.fillRect(cb.nl, cb.nt + (cb.nb - cb.nt) * 0.35, cb.nr - cb.nl, (cb.nb - cb.nt) * 0.16);
+      ctx.fillStyle = 'rgba(255,107,139,0.7)';
+      ctx.fillRect(b.nl, b.nt + (b.nb - b.nt) * 0.35, b.nr - b.nl, (b.nb - b.nt) * 0.16);
       // Wheels
-      var sw = scaleAt(zN);
+      var sw = scaleAt(Math.max(zN, 0.7));
       ctx.fillStyle = '#171024';
       for (var wsign = -1; wsign <= 1; wsign += 2) {
         var wx = projX(e.x + wsign * (e.w / 2 - 0.12), zN, sw);
@@ -1233,6 +1349,32 @@
         ctx.arc(wx, projY(0.3, sw), 0.3 * sw, 0, 6.2832);
         ctx.fill();
       }
+      if (FX.rim) rimLight(b, col, 1);
+      faceW = b.nr - b.nl; faceH = b.nb - b.nt;
+      glyph = Math.min(faceW, faceH) * 0.24;
+      if (FX.glyph && glyph > 2.2) actionGlyph((b.nl + b.nr) / 2, b.nt + faceH * 0.55, glyph, 'lane', col);
+    }
+
+    // Far off, the shape is only a few pixels tall. Stand a fixed-size beacon
+    // on it so the lane and the move still read against the horizon.
+    var onScreenH = e.h * s;
+    if (FX.beacon && onScreenH < 24) {
+      var bx = projX(e.x, zN, s), by = projY(0, s);
+      ctx.save();
+      ctx.globalAlpha = alpha * clamp((24 - onScreenH) / 8, 0, 0.85);
+      drawGlow(bx, by - 9, 16, col, 0.5);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2.2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx, by - 15);
+      ctx.stroke();
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(bx, by - 18, 3, 0, 6.2832);
+      ctx.fill();
+      ctx.restore();
     }
     ctx.restore();
   }
@@ -1245,11 +1387,7 @@
     var r = e.r * s;
     var wobble = Math.abs(Math.cos(e.spin));
     ctx.save();
-    var gl = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 2.4);
-    gl.addColorStop(0, 'rgba(255,207,92,0.42)');
-    gl.addColorStop(1, 'rgba(255,207,92,0)');
-    ctx.fillStyle = gl;
-    ctx.beginPath(); ctx.arc(x, y, r * 2.4, 0, 6.2832); ctx.fill();
+    drawGlow(x, y, r * 2.4, '#ffcf5c', 0.55);
 
     var cg = ctx.createLinearGradient(x - r, y - r, x + r, y + r);
     cg.addColorStop(0, '#fff2c0');
@@ -1277,11 +1415,7 @@
     var x = projX(e.x, e.z, s), y = projY(e.y + Math.sin(G.time * 3 + e.spin) * 0.12, s);
     var r = e.r * s;
     ctx.save();
-    var gl = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 2.2);
-    gl.addColorStop(0, rgba(def.color, 0.5));
-    gl.addColorStop(1, rgba(def.color, 0));
-    ctx.fillStyle = gl;
-    ctx.beginPath(); ctx.arc(x, y, r * 2.2, 0, 6.2832); ctx.fill();
+    drawGlow(x, y, r * 2.2, def.color, 0.6);
 
     ctx.translate(x, y);
     ctx.rotate(Math.sin(e.spin * 0.5) * 0.3);
@@ -1346,11 +1480,7 @@
     // Menacing glow while winding up.
     if (aiming) {
       var gx = projX(e.x, e.z, s), gy = projY(plinth + 1.1, s);
-      var gg = ctx.createRadialGradient(gx, gy, 1, gx, gy, 1.8 * s);
-      gg.addColorStop(0, 'rgba(255,107,139,' + (0.25 + charge * 0.3) + ')');
-      gg.addColorStop(1, 'rgba(255,107,139,0)');
-      ctx.fillStyle = gg;
-      ctx.beginPath(); ctx.arc(gx, gy, 1.8 * s, 0, 6.2832); ctx.fill();
+      drawGlow(gx, gy, 1.8 * s, '#ff6b8b', 0.35 + charge * 0.35);
     }
 
     ctx.save();
@@ -1441,11 +1571,7 @@
     ctx.stroke();
     ctx.restore();
 
-    var gl = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 2.6);
-    gl.addColorStop(0, 'rgba(255,107,139,0.42)');
-    gl.addColorStop(1, 'rgba(255,107,139,0)');
-    ctx.fillStyle = gl;
-    ctx.beginPath(); ctx.arc(x, y, r * 2.6, 0, 6.2832); ctx.fill();
+    drawGlow(x, y, r * 2.6, '#ff6b8b', 0.6);
 
     ctx.save();
     ctx.translate(x, y);
@@ -2267,7 +2393,8 @@
   window.ShadowStep = {
     G: G, player: player, CFG: CFG, OBSTACLES: OBSTACLES, STATE: STATE, Store: Store,
     moveLane: moveLane, jump: doJump, roll: doRoll, start: startRun, laneX: laneX,
-    challengeUrl: challengeUrl, makeEnemy: makeEnemy, makeStar: makeStar
+    challengeUrl: challengeUrl, makeEnemy: makeEnemy, makeStar: makeStar, FX: FX,
+    makeObstacle: makeObstacle, makeCoin: makeCoin, makePower: makePower
   };
 
   if ('serviceWorker' in navigator) {
