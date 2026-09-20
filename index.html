@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="description" content="Shadow Step — a mobile endless ninja runner. Swipe to switch lanes, jump, and roll past obstacles while collecting coins, scrolls and power-ups." />
+<meta name="theme-color" content="#120a1e" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Shadow Step" />
+<title>Shadow Step — Ninja Runner</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/icon-192.png" sizes="192x192" type="image/png" />
+<link rel="apple-touch-icon" href="icons/icon-180.png" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+
+  <!-- ───────── HUD ───────── -->
+  <div id="hud" class="hud" aria-hidden="true">
+    <div class="hud-row hud-top">
+      <div class="hud-block">
+        <div class="hud-label">Score</div>
+        <div class="hud-value" id="hudScore">0</div>
+      </div>
+      <div class="hud-block hud-center">
+        <div class="hud-label">Distance</div>
+        <div class="hud-value" id="hudDistance">0m</div>
+      </div>
+      <div class="hud-block hud-right">
+        <div class="hud-label">Coins</div>
+        <div class="hud-value coins" id="hudCoins">0</div>
+      </div>
+    </div>
+    <div class="hud-row hud-second">
+      <div id="hudLives" class="lives" aria-label="lives"></div>
+      <div id="hudMultiplier" class="multiplier hidden">x2</div>
+      <div id="hudRival" class="rival-chip hidden">
+        <span class="rival-chip-name" id="hudRivalName">Rival</span>
+        <span class="rival-chip-score" id="hudRivalScore">0</span>
+      </div>
+    </div>
+    <div id="hudPowerups" class="powerups"></div>
+  </div>
+
+  <button id="pauseBtn" class="icon-btn pause-btn" type="button" aria-label="Pause">❚❚</button>
+  <button id="soundBtn" class="icon-btn sound-btn" type="button" aria-label="Toggle sound">🔊</button>
+
+  <!-- ───────── Title screen ───────── -->
+  <section id="menu" class="overlay">
+    <div class="panel">
+      <div class="crest" aria-hidden="true">
+        <span class="crest-moon"></span>
+        <span class="crest-ninja">🥷</span>
+      </div>
+      <h1>Shadow<span>Step</span></h1>
+      <p class="tagline">A kind ninja on a midnight rooftop run.<br />Dodge, leap, roll — and gather every coin.</p>
+      <button id="playBtn" class="primary-btn" type="button">Start Run</button>
+      <div class="best-line">Best <strong id="menuBest">0</strong> &nbsp;·&nbsp; Coins <strong id="menuCoins">0</strong></div>
+      <button id="shareMenuBtn" class="ghost-btn hidden" type="button">Challenge a friend</button>
+      <div id="rivalBanner" class="rival-banner hidden">
+        <span class="rival-swords" aria-hidden="true">⚔️</span>
+        <span class="rival-text"><strong id="rivalName">A ninja</strong> challenges you<br /><strong id="rivalScore" class="rival-target">0</strong></span>
+        <button id="rivalClear" class="rival-clear" type="button" aria-label="Clear challenge">×</button>
+      </div>
+      <ul class="how-to">
+        <li><span class="key">Swipe ←/→</span> change lane</li>
+        <li><span class="key">Swipe ↑ / Tap</span> jump</li>
+        <li><span class="key">Swipe ↓</span> roll under</li>
+        <li><span class="key">Keys</span> arrows · space · P</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ───────── Pause ───────── -->
+  <section id="pauseScreen" class="overlay hidden">
+    <div class="panel">
+      <h2>Paused</h2>
+      <div class="stat-grid">
+        <div><span id="pauseScore">0</span><small>score</small></div>
+        <div><span id="pauseDistance">0m</span><small>distance</small></div>
+        <div><span id="pauseCoins">0</span><small>coins</small></div>
+      </div>
+      <button id="resumeBtn" class="primary-btn" type="button">Resume</button>
+      <button id="quitBtn" class="ghost-btn" type="button">End run</button>
+    </div>
+  </section>
+
+  <!-- ───────── Game over ───────── -->
+  <section id="gameOver" class="overlay hidden">
+    <div class="panel">
+      <h2 id="overTitle">Run Complete</h2>
+      <div class="score-big" id="overScore">0</div>
+      <div id="overBestTag" class="best-tag hidden">New best!</div>
+      <div class="stat-grid">
+        <div><span id="overDistance">0m</span><small>distance</small></div>
+        <div><span id="overCoins">0</span><small>coins</small></div>
+        <div><span id="overBest">0</span><small>best</small></div>
+      </div>
+      <div id="rivalResult" class="rival-result hidden"></div>
+      <button id="againBtn" class="primary-btn" type="button">Run Again</button>
+      <div class="share-row">
+        <input id="nameInput" class="name-input" type="text" maxlength="14" placeholder="Your ninja name"
+               autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Your ninja name" />
+        <button id="shareBtn" class="share-btn" type="button">Share</button>
+      </div>
+      <button id="menuBtn" class="ghost-btn" type="button">Main menu</button>
+    </div>
+  </section>
+
+  <div id="toast" class="toast hidden"></div>
+</div>
+<script src="game.js"></script>
+</body>
+</html>

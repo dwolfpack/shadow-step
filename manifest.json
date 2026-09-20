@@ -1,0 +1,17 @@
+{
+  "name": "Shadow Step — Ninja Runner",
+  "short_name": "Shadow Step",
+  "description": "An endless ninja runner: swipe to switch lanes, jump and roll past obstacles while collecting coins and power-ups.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#120a1e",
+  "theme_color": "#120a1e",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
